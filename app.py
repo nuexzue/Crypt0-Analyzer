@@ -5,8 +5,6 @@ Professional trading analysis from chart and orderbook screenshots
 
 import streamlit as st
 from PIL import Image
-import io
-from datetime import datetime
 
 # Import core modules
 from core.ocr_engine import OCREngine
@@ -16,7 +14,6 @@ from core.technical_engine import TechnicalEngine
 from core.orderbook_engine import OrderbookEngine
 from core.scoring_engine import ScoringEngine
 from core.llm_engine import LLMEngine
-from core.pdf_exporter import PDFExporter
 
 # Page configuration
 st.set_page_config(
@@ -187,6 +184,8 @@ def init_session_state():
         st.session_state.chart_image = None
     if 'orderbook_image' not in st.session_state:
         st.session_state.orderbook_image = None
+    if 'chat_messages' not in st.session_state:
+        st.session_state.chat_messages = []
 
 
 def display_header():
@@ -253,7 +252,7 @@ def display_sidebar():
         3. Click **Analyze** to process
         4. Review the analysis results
         5. Generate AI report (optional)
-        6. Export PDF report
+        6. Ask questions in the AI chat
         """)
         
         st.markdown("---")
@@ -693,44 +692,65 @@ def generate_ai_report():
         st.error(f"❌ AI Report Generation Failed: {response.error}")
 
 
-def display_export_section():
-    """Display PDF export section."""
-    st.markdown("<div class='section-header'>📥 Export Report</div>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
+def _build_chat_context() -> str:
+    """Build analysis context for the chat assistant."""
+    if not st.session_state.analysis_complete:
+        return "No analysis has been run yet. Ask the user to upload screenshots and run analysis first."
+
+    technical = st.session_state.technical_summary or {}
+    orderbook = st.session_state.orderbook_summary or {}
+    final_score = st.session_state.final_score or {}
+
+    return (
+        "You are assisting with a crypto trading analysis based on screenshot data. "
+        "Use the analysis data below to answer questions. If the data is missing or unclear, say so.\n\n"
+        f"TECHNICAL SUMMARY: {technical}\n"
+        f"ORDERBOOK SUMMARY: {orderbook}\n"
+        f"FINAL SCORE: {final_score}\n"
+    )
+
+
+def display_chat_section():
+    """Display chat interface for AI analyst."""
+    st.markdown("<div class='section-header'>💬 AI Chat</div>", unsafe_allow_html=True)
+
+    if st.session_state.chat_messages:
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+    else:
+        st.info("Ask questions about the analysis, risk, or next steps.")
+
+    col1, col2 = st.columns([4, 1])
     with col2:
-        if st.button("📄 Export PDF Report", type="primary", use_container_width=True):
-            export_pdf_report()
+        if st.button("🧹 Clear Chat", use_container_width=True):
+            st.session_state.chat_messages = []
+            st.rerun()
 
+    user_prompt = st.chat_input("Ask the AI analyst...")
+    if user_prompt:
+        st.session_state.chat_messages.append({"role": "user", "content": user_prompt})
 
-def export_pdf_report():
-    """Generate and download PDF report."""
-    with st.spinner("📄 Generating PDF report..."):
-        try:
-            exporter = PDFExporter()
-            pdf_bytes = exporter.export(
-                st.session_state.technical_summary,
-                st.session_state.orderbook_summary,
-                st.session_state.final_score,
-                st.session_state.ai_report
+        llm = LLMEngine(
+            model=st.session_state.get('llm_model', 'mistral'),
+            temperature=st.session_state.get('llm_temperature', 0.3)
+        )
+
+        if not llm.check_connection():
+            st.error("❌ Cannot connect to Ollama. Make sure it's running on localhost:11434")
+            return
+
+        with st.spinner("💬 Thinking..."):
+            response = llm.generate_chat_response(
+                messages=st.session_state.chat_messages,
+                context=_build_chat_context()
             )
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"crypto_analysis_{timestamp}.pdf"
-            
-            st.download_button(
-                label="⬇️ Download PDF Report",
-                data=pdf_bytes,
-                file_name=filename,
-                mime="application/pdf",
-                use_container_width=True
-            )
-            
-            st.success("✅ PDF report generated successfully!")
-            
-        except Exception as e:
-            st.error(f"❌ Failed to generate PDF: {str(e)}")
+
+        if response.success:
+            st.session_state.chat_messages.append({"role": "assistant", "content": response.report})
+            st.rerun()
+        else:
+            st.error(f"❌ Chat failed: {response.error}")
 
 
 def main():
@@ -808,8 +828,8 @@ def main():
         
         st.markdown("---")
         
-        # Export section
-        display_export_section()
+        # AI Chat
+        display_chat_section()
         
         st.markdown("---")
         
@@ -823,6 +843,7 @@ def main():
                 st.session_state.orderbook_summary = None
                 st.session_state.final_score = None
                 st.session_state.ai_report = None
+                st.session_state.chat_messages = []
                 st.session_state.chart_image = None
                 st.session_state.orderbook_image = None
                 st.rerun()

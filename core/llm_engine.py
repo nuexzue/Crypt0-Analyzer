@@ -73,6 +73,20 @@ class LLMEngine:
         )
         
         return self._call_llm(prompt)
+
+    def generate_chat_response(self, messages: list, context: str) -> LLMResponse:
+        """
+        Generate a chat response based on conversation history and analysis context.
+        
+        Args:
+            messages: List of chat messages with roles and content
+            context: Analysis context to ground the chat
+            
+        Returns:
+            LLMResponse with chat reply
+        """
+        prompt = self._build_chat_prompt(messages, context)
+        return self._call_llm(prompt)
     
     def _build_report_prompt(
         self,
@@ -136,6 +150,39 @@ Generate a professional trading report with the following sections:
 
 Use professional financial language. Be concise but thorough.
 Format the response in clean markdown."""
+
+        return prompt
+
+    def _build_chat_prompt(self, messages: list, context: str) -> str:
+        """
+        Build a prompt for conversational Q&A.
+        
+        Args:
+            messages: List of chat messages with roles and content
+            context: Analysis context
+            
+        Returns:
+            Formatted prompt string
+        """
+        history_lines = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "assistant":
+                history_lines.append(f"Assistant: {content}")
+            else:
+                history_lines.append(f"User: {content}")
+
+        history_text = "\n".join(history_lines)
+
+        prompt = (
+            "You are a professional crypto trading analyst assistant. "
+            "Answer questions succinctly, grounded in the analysis context. "
+            "If something is unknown, say so and suggest what data is needed.\n\n"
+            f"ANALYSIS CONTEXT:\n{context}\n\n"
+            f"CONVERSATION:\n{history_text}\n"
+            "Assistant:"
+        )
 
         return prompt
     
